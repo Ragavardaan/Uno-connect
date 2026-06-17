@@ -1,0 +1,6 @@
+{
+  "name": "UNO Multiplayer",
+  "description": "A real-time multiplayer UNO game with custom host settings, room-based matchmaking, and responsive card gameplay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
