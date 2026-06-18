@@ -72,20 +72,25 @@ export const CardItem: React.FC<CardItemProps> = ({
 
   if (facedown) {
     return (
-      <motion.div
-        className={`${getSizeClasses()} bg-slate-900 border-2 border-slate-800 relative flex items-center justify-center cursor-default shadow-lg overflow-hidden`}
+      <motion.button
+        type="button"
+        onClick={isInteractive && onClick ? onClick : undefined}
+        className={`${getSizeClasses()} bg-slate-900 border-2 border-slate-800 relative flex items-center justify-center shadow-lg overflow-hidden outline-none ${
+          isInteractive && onClick ? 'cursor-pointer focus:ring-2 focus:ring-offset-2 focus:ring-sky-500' : 'cursor-default'
+        }`}
         whileHover={isInteractive ? { scale: 1.05, y: -4 } : {}}
+        whileTap={isInteractive ? { scale: 0.95 } : {}}
         transition={{ type: 'spring', stiffness: 300, damping: 20 }}
       >
         {/* Card back logo */}
         <div className="absolute inset-2 border border-red-500/30 rounded flex items-center justify-center bg-gradient-to-br from-red-600 via-red-800 to-slate-950">
-          <div className="w-full flex flex-col items-center justify-center transform -rotate-12">
+          <div className="w-full flex flex-col items-center justify-center transform -rotate-12 select-none">
             <span className="font-extrabold text-white text-xs sm:text-lg italic tracking-tight uppercase drop-shadow-[0_2px_2px_rgba(0,0,0,1)] bg-amber-500 py-0.5 px-2 rounded-md">
               UNO
             </span>
           </div>
         </div>
-      </motion.div>
+      </motion.button>
     );
   }
 
