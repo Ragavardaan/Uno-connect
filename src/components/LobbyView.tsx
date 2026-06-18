@@ -7,8 +7,7 @@ interface LobbyViewProps {
     name: string,
     avatar: string,
     roomId?: string,
-    maxPlayers?: number,
-    preferredMode?: 'websocket' | 'polling'
+    maxPlayers?: number
   ) => void;
   error?: string;
 }
@@ -29,13 +28,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({ onJoinRoom, error }) => {
   const [maxPlayers, setMaxPlayers] = useState(4);
   const [publicRooms, setPublicRooms] = useState<PublicRoom[]>([]);
   const [isLoadingPublicRooms, setIsLoadingPublicRooms] = useState(false);
-  const [preferredMode, setPreferredMode] = useState<'websocket' | 'polling'>(() => {
-    return (localStorage.getItem('uno_network_mode') as 'websocket' | 'polling') || 'websocket';
-  });
-
-  useEffect(() => {
-    localStorage.setItem('uno_network_mode', preferredMode);
-  }, [preferredMode]);
 
   // Load public rooms for matchmaking explorer
   const fetchOpenLobbies = async () => {
@@ -64,7 +56,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({ onJoinRoom, error }) => {
     if (!name.trim()) return;
     localStorage.setItem('uno_player_name', name.trim());
     localStorage.setItem('uno_player_avatar', avatar);
-    onJoinRoom(name, avatar, undefined, maxPlayers, preferredMode);
+    onJoinRoom(name, avatar, undefined, maxPlayers);
   };
 
   const handleQuickMatch = () => {
@@ -72,7 +64,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({ onJoinRoom, error }) => {
     localStorage.setItem('uno_player_name', name.trim());
     localStorage.setItem('uno_player_avatar', avatar);
     // Passing no roomId triggers automatic open lobby matchmaking on server
-    onJoinRoom(name, avatar, undefined, undefined, preferredMode);
+    onJoinRoom(name, avatar);
   };
 
   const handleJoinSpecificRoom = (e: React.FormEvent) => {
@@ -80,7 +72,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({ onJoinRoom, error }) => {
     if (!name.trim() || !targetRoomId.trim()) return;
     localStorage.setItem('uno_player_name', name.trim());
     localStorage.setItem('uno_player_avatar', avatar);
-    onJoinRoom(name, avatar, targetRoomId.toUpperCase().trim(), undefined, preferredMode);
+    onJoinRoom(name, avatar, targetRoomId.toUpperCase().trim());
   };
 
   return (
@@ -159,41 +151,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({ onJoinRoom, error }) => {
                       </button>
                     ))}
                   </div>
-                </div>
-
-                <div className="pt-4 border-t border-slate-800/60">
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                    Network Protocol
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPreferredMode('websocket')}
-                      className={`py-2 px-3 rounded-xl text-xs font-semibold leading-tight flex flex-col items-center justify-center gap-0.5 transition cursor-pointer ${
-                        preferredMode === 'websocket'
-                          ? 'bg-amber-500/15 border-2 border-amber-500 text-amber-400 shadow-md shadow-amber-500/5'
-                          : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <span>⚡ WebSocket</span>
-                      <span className="text-[9px] opacity-75">Instant Feed</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPreferredMode('polling')}
-                      className={`py-2 px-3 rounded-xl text-xs font-semibold leading-tight flex flex-col items-center justify-center gap-0.5 transition cursor-pointer ${
-                        preferredMode === 'polling'
-                          ? 'bg-amber-500/15 border-2 border-amber-500 text-amber-400 shadow-md shadow-amber-500/5'
-                          : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <span>🧱 HTTP Polling</span>
-                      <span className="text-[9px] opacity-75">Firewall Safe</span>
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-slate-500 mt-2">
-                    Select <span className="text-amber-500/80">HTTP Polling</span> if you are behind restrictive campus firewalls that block socket handshakes.
-                  </p>
                 </div>
               </div>
             </div>
@@ -331,7 +288,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({ onJoinRoom, error }) => {
                         <button
                           onClick={() => {
                             setTargetRoomId(room.roomId);
-                            onJoinRoom(name, avatar, room.roomId, undefined, preferredMode);
+                            onJoinRoom(name, avatar, room.roomId);
                           }}
                           disabled={!name.trim()}
                           className="bg-amber-500/15 hover:bg-amber-500 hover:text-slate-950 text-amber-400 rounded-md px-2.5 py-0.5 font-bold transition disabled:opacity-40"
