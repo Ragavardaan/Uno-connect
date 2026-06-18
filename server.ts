@@ -1,7 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
-import { WebSocketServer, WebSocket } from 'ws';
+import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import {
   Card,
@@ -150,15 +150,13 @@ function getGameStateForPlayer(room: RoomData, playerId: string): GameState {
   };
 }
 
-// Broadcast game state to all players in a room
-function broadcastRoomState(room: RoomData, wss: WebSocketServer) {
-  wss.clients.forEach(client => {
-    const conn = activeConnections.get(client);
-    if (conn && conn.roomId === room.id) {
-      if (client.readyState === WebSocket.OPEN) {
-        const state = getGameStateForPlayer(room, conn.playerId);
-        client.send(JSON.stringify({ type: 'state-update', state }));
-      }
+// Broadcast game state to all players in a room using Socket.IO
+function broadcastRoomState(room: RoomData, io: SocketIOServer) {
+  io.of("/").sockets.forEach(socket => {
+    const s = socket as any;
+    if (s.roomId === room.id && s.playerId) {
+      const state = getGameStateForPlayer(room, s.playerId);
+      s.emit('message', { type: 'state-update', state });
     }
   });
 }
@@ -217,7 +215,7 @@ function getRandomBotName(existingNames: string[]): { name: string; avatar: stri
 }
 
 // Execute turn for AI Bot
-function executeBotTurn(roomId: string, wss: WebSocketServer) {
+function executeBotTurn(roomId: string, wss: SocketIOServer) {
   const room = rooms.get(roomId);
   if (!room || room.status !== 'playing') return;
 
@@ -419,7 +417,7 @@ function executeBotTurn(roomId: string, wss: WebSocketServer) {
 }
 
 // Set up Bot actions scheduling
-function scheduleBotPlay(roomId: string, wss: WebSocketServer) {
+function scheduleBotPlay(roomId: string, wss: SocketIOServer) {
   if (botTimeouts.has(roomId)) {
     clearTimeout(botTimeouts.get(roomId)!);
     botTimeouts.delete(roomId);
@@ -440,7 +438,7 @@ function scheduleBotPlay(roomId: string, wss: WebSocketServer) {
   }
 }
 
-function handlePlayerDepart(roomId: string, playerId: string, wss: WebSocketServer) {
+function handlePlayerDepart(roomId: string, playerId: string, wss: SocketIOServer) {
   const room = rooms.get(roomId);
   if (!room) return;
 
@@ -511,7 +509,7 @@ function executeGameAction(
   playerId: string,
   msg: ClientMessage,
   sendError: (err: string) => void,
-  wss: WebSocketServer
+  wss: SocketIOServer
 ) {
   switch (msg.type) {
     case 'join-room': {
@@ -808,14 +806,7 @@ async function startServer() {
   const PORT = 3000;
 
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ noServer: true });
-
-  // Handle upgrade to WebSockets
-  server.on('upgrade', (request, socket, head) => {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
-  });
+  const wss = new SocketIOServer(server);
 
   // Enable JSON request body parser
   app.use(express.json());
@@ -838,138 +829,6 @@ async function startServer() {
     res.json(activeRooms);
   });
 
-  // 1. HTTP Join room endpoint (Firewall fallback)
-  app.post('/api/room/join', (req, res) => {
-    try {
-      const { name, avatar, roomId: reqRoomId, maxPlayers: reqMaxPlayers, playerId: reqPlayerId } = req.body;
-      let roomId = reqRoomId?.toUpperCase().trim();
-      const playerId = reqPlayerId || `player_${Math.random().toString(36).substring(2, 9)}`;
-
-      let room: RoomData | undefined;
-
-      // Matchmaking
-      if (!roomId) {
-        const lobbies = Array.from(rooms.values()).filter(r => r.status === 'lobby' && r.players.length < r.maxPlayers);
-        if (lobbies.length > 0) {
-          room = lobbies[Math.floor(Math.random() * lobbies.length)];
-          roomId = room.id;
-        } else {
-          roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-        }
-      }
-
-      room = rooms.get(roomId);
-
-      if (!room) {
-        const maxPlayers = reqMaxPlayers ? Math.max(2, Math.min(10, reqMaxPlayers)) : 4;
-        room = {
-          id: roomId,
-          status: 'lobby',
-          players: [],
-          deck: [],
-          discardPile: [],
-          currentColor: 'red',
-          currentTurnIndex: 0,
-          direction: 1,
-          maxPlayers,
-          winnerId: null,
-          logs: [],
-          unoCalledPlayers: {},
-          mustCallUnoPlayerId: null
-        };
-        rooms.set(roomId, room);
-      }
-
-      // Check reconnecting
-      let player = room.players.find(p => p.id === playerId);
-      if (player) {
-        player.isDisconnected = false;
-        (player as any).lastSeen = Date.now();
-        addLog(room, `🔌 ${player.name} reconnected!`, 'info');
-      } else {
-        if (room.status !== 'lobby') {
-          return res.status(400).json({ error: 'Game has already started!' });
-        }
-
-        if (room.players.length >= room.maxPlayers) {
-          return res.status(400).json({ error: 'Room is full!' });
-        }
-
-        player = {
-          id: playerId,
-          name: (name || 'Guest').trim(),
-          avatar: avatar || '🦊',
-          cards: [],
-          isHost: room.players.length === 0,
-          isReady: false,
-          isDisconnected: false
-        };
-        (player as any).lastSeen = Date.now();
-        room.players.push(player);
-        addLog(room, `👋 ${player.name} joined the room.`, 'info');
-      }
-
-      broadcastRoomState(room, wss);
-      res.json({ success: true, roomId, playerId });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // 2. HTTP Fetch state endpoint
-  app.get('/api/room/:roomId/state', (req, res) => {
-    const { roomId } = req.params;
-    const { playerId } = req.query;
-    const rId = roomId?.toUpperCase();
-    const room = rooms.get(rId);
-    if (!room) {
-      return res.status(404).json({ error: 'Room not found' });
-    }
-
-    if (playerId) {
-      const player = room.players.find(p => p.id === playerId);
-      if (player) {
-        player.isDisconnected = false;
-        (player as any).lastSeen = Date.now();
-      }
-    }
-
-    scheduleBotPlay(room.id, wss);
-
-    const state = getGameStateForPlayer(room, playerId as string);
-    res.json({ state });
-  });
-
-  // 3. HTTP Submit actions endpoint
-  app.post('/api/room/:roomId/action', (req, res) => {
-    const { roomId } = req.params;
-    const { playerId, action } = req.body;
-    const rId = roomId?.toUpperCase();
-    const room = rooms.get(rId);
-    if (!room) {
-      return res.status(404).json({ error: 'Room not found' });
-    }
-
-    const player = room.players.find(p => p.id === playerId);
-    if (player) {
-      player.isDisconnected = false;
-      (player as any).lastSeen = Date.now();
-    }
-
-    let errorMsg = '';
-    executeGameAction(room, playerId, action, (err) => {
-      errorMsg = err;
-    }, wss);
-
-    if (errorMsg) {
-      return res.status(400).json({ error: errorMsg });
-    }
-
-    broadcastRoomState(room, wss);
-    const state = getGameStateForPlayer(room, playerId);
-    res.json({ state });
-  });
-
   // Active presence heartbeat tracker
   setInterval(() => {
     const now = Date.now();
@@ -978,10 +837,11 @@ async function startServer() {
       room.players.forEach(p => {
         const lastSeen = (p as any).lastSeen;
         if (!p.id.startsWith('bot_') && !p.isDisconnected && lastSeen) {
-          // Check if they have an active WebSocket connection
+          // Check if they have an active Socket.io connection
           let hasWS = false;
-          activeConnections.forEach(conn => {
-            if (conn.roomId === room.id && conn.playerId === p.id) {
+          wss.of("/").sockets.forEach(socket => {
+            const s = socket as any;
+            if (s.roomId === room.id && s.playerId === p.id) {
               hasWS = true;
             }
           });
@@ -1009,10 +869,10 @@ async function startServer() {
               if (p.isHost && room.players.length > 0) {
                 const nextRealPlayer = room.players.find(pr => !pr.id.startsWith('bot_'));
                 if (nextRealPlayer) {
-                  nextRealPlayer.isHost = true;
-                  addLog(room, `💼 ${nextRealPlayer.name} is now the host.`, 'info');
+                   nextRealPlayer.isHost = true;
+                   addLog(room, `💼 ${nextRealPlayer.name} is now the host.`, 'info');
                 } else {
-                  room.players[0].isHost = true;
+                   room.players[0].isHost = true;
                 }
               }
             }
@@ -1035,15 +895,13 @@ async function startServer() {
     }
   }, 5000);
 
-  wss.on('connection', (ws: WebSocket) => {
-    ws.on('message', (messageStr: string) => {
+  wss.on('connection', (ws: any) => {
+    ws.on('message', (msg: ClientMessage) => {
       try {
-        const msg: ClientMessage = JSON.parse(messageStr);
-
         switch (msg.type) {
           case 'join-room': {
             let roomId = msg.roomId?.toUpperCase().trim();
-            const playerId = activeConnections.get(ws)?.playerId || `player_${Math.random().toString(36).substring(2, 9)}`;
+            const playerId = ws.playerId || `player_${Math.random().toString(36).substring(2, 9)}`;
 
             let room: RoomData | undefined;
 
@@ -1088,12 +946,12 @@ async function startServer() {
               addLog(room, `🔌 ${player.name} reconnected!`, 'info');
             } else {
               if (room.status !== 'lobby' && !player) {
-                ws.send(JSON.stringify({ type: 'error', message: 'Game has already started!' }));
+                ws.emit('message', { type: 'error', message: 'Game has already started!' });
                 return;
               }
 
               if (room.players.length >= room.maxPlayers) {
-                ws.send(JSON.stringify({ type: 'error', message: 'Room is full!' }));
+                ws.emit('message', { type: 'error', message: 'Room is full!' });
                 return;
               }
 
@@ -1111,50 +969,48 @@ async function startServer() {
               addLog(room, `👋 ${player.name} joined the room.`, 'info');
             }
 
-            // Associate connection
-            activeConnections.set(ws, { roomId, playerId });
-            ws.send(JSON.stringify({ type: 'joined-room', roomId, playerId }));
+            // Associate connection on the socket instance
+            ws.roomId = roomId;
+            ws.playerId = playerId;
+            ws.emit('message', { type: 'joined-room', roomId, playerId });
 
             broadcastRoomState(room, wss);
             break;
           }
 
           default: {
-            const conn = activeConnections.get(ws);
-            if (!conn) return;
+            const rId = ws.roomId;
+            const pId = ws.playerId;
+            if (!rId || !pId) return;
 
-            const room = rooms.get(conn.roomId);
+            const room = rooms.get(rId);
             if (!room) return;
 
-            const player = room.players.find(p => p.id === conn.playerId);
+            const player = room.players.find(p => p.id === pId);
             if (player) {
               player.isDisconnected = false;
               (player as any).lastSeen = Date.now();
             }
 
-            executeGameAction(room, conn.playerId, msg, (err) => {
-              ws.send(JSON.stringify({ type: 'error', message: err }));
+            executeGameAction(room, pId, msg, (err) => {
+              ws.emit('message', { type: 'error', message: err });
             }, wss);
             break;
           }
         }
       } catch (err: any) {
-        console.error('WebSocket message parsing error:', err);
+        console.error('Socket.io message parsing error:', err);
       }
     });
 
-    ws.on('close', () => {
-      handleClientDisconnect(ws, wss);
+    ws.on('disconnect', () => {
+      const rId = ws.roomId;
+      const pId = ws.playerId;
+      if (rId && pId) {
+        handlePlayerDepart(rId, pId, wss);
+      }
     });
   });
-
-  function handleClientDisconnect(ws: WebSocket, wss: WebSocketServer) {
-    const conn = activeConnections.get(ws);
-    if (!conn) return;
-
-    activeConnections.delete(ws);
-    handlePlayerDepart(conn.roomId, conn.playerId, wss);
-  }
 
   // Vite routing setup
   if (process.env.NODE_ENV !== 'production') {
