@@ -84,6 +84,8 @@ export const GameTable: React.FC<GameTableProps> = ({
   // Determine local player
   const self = gameState.players.find(p => p.id === playerId);
   const isMyTurn = gameState.currentTurn === playerId;
+  const activePlayer = gameState.players.find(p => p.id === gameState.currentTurn);
+  const activePlayerName = activePlayer ? (activePlayer.id === playerId ? 'You' : activePlayer.name) : 'Someone';
   const isLobby = gameState.status === 'lobby';
   const isEnded = gameState.status === 'ended';
 
@@ -106,23 +108,31 @@ export const GameTable: React.FC<GameTableProps> = ({
 
   const opponents = getOrderedOpponents();
 
-  // Helper to determine position classes for opponents circularly
-  const getOpponentPositionClass = (index: number, total: number) => {
+  // Helper to determine position style for opponents along a beautiful elliptical horseshoe
+  const getOpponentStyle = (index: number, total: number) => {
+    let angle: number;
     if (total === 1) {
-      return 'top-4 left-1/2 transform -translate-x-1/2';
+      angle = Math.PI / 2; // 90 degrees (top center)
+    } else {
+      // theta ranges dynamically from 165 degrees (left edge) to 15 degrees (right edge)
+      const startAngle = (165 * Math.PI) / 180;
+      const endAngle = (15 * Math.PI) / 180;
+      angle = startAngle - index * ((startAngle - endAngle) / (total - 1));
     }
-    if (total === 2) {
-      if (index === 0) return 'top-4 left-12 sm:left-24';
-      return 'top-4 right-12 sm:right-24';
-    }
-    if (total === 3) {
-      if (index === 0) return 'top-1/3 left-4 transform -translate-y-1/2';
-      if (index === 1) return 'top-4 left-1/2 transform -translate-x-1/2';
-      return 'top-1/3 right-4 transform -translate-y-1/2';
-    }
-    // Default up to 10 players beautifully arranged on the top header rails
-    const columns = ['left-4 sm:left-12 top-1/4', 'left-1/4 top-4', 'left-1/2 -translate-x-1/2 top-4', 'right-1/4 top-4', 'right-4 sm:right-12 top-1/4'];
-    return columns[index % columns.length];
+
+    const rx = 40; // horizontal radius (percentage of table width)
+    const ry = 30; // vertical radius (percentage of table height)
+    const cx = 50; // center x
+    const cy = 42; // center y
+
+    const left = cx + rx * Math.cos(angle);
+    const top = cy - ry * Math.sin(angle);
+
+    return {
+      left: `${left}%`,
+      top: `${top}%`,
+      transform: 'translate(-50%, -50%)',
+    };
   };
 
   const handlePlayCard = (card: Card) => {
@@ -340,12 +350,13 @@ export const GameTable: React.FC<GameTableProps> = ({
               <div className="relative w-full h-[60vh] z-10 pointer-events-none">
                 {opponents.map((opp, idx) => {
                   const isOpponentTurn = gameState.currentTurn === opp.id;
-                  const posClass = getOpponentPositionClass(idx, opponents.length);
+                  const posStyle = getOpponentStyle(idx, opponents.length);
 
                   return (
                     <div
                       key={opp.id}
-                      className={`absolute ${posClass} pointer-events-auto transition-transform ${isOpponentTurn ? 'scale-105' : ''}`}
+                      style={posStyle}
+                      className={`absolute pointer-events-auto transition-all duration-300 ${isOpponentTurn ? 'scale-110 z-20' : 'scale-100 z-10'}`}
                     >
                       <motion.div
                         className={`flex flex-col items-center bg-slate-950/90 backdrop-blur-md rounded-2xl p-2.5 border-2 shadow-xl w-28 sm:w-32 relative
@@ -503,10 +514,10 @@ export const GameTable: React.FC<GameTableProps> = ({
                       </motion.button>
                     )}
 
-                    <div className="text-right">
-                      <span className="text-[10px] font-bold text-slate-500 block uppercase font-mono">Turn:</span>
-                      <span className={`text-xs font-black uppercase ${isMyTurn ? 'text-amber-400' : 'text-slate-400'}`}>
-                        {isMyTurn ? '🌟 YOUR TURN' : 'Waiting...'}
+                    <div className="text-right bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-1.5 shadow-lg flex flex-col justify-center">
+                      <span className="text-[9px] font-bold text-slate-400 block uppercase font-mono tracking-wider">Current Turn</span>
+                      <span className={`text-xs font-black uppercase tracking-wide ${isMyTurn ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`}>
+                        {isMyTurn ? '🌟 YOUR TURN' : `👉 ${activePlayerName}`}
                       </span>
                     </div>
                   </div>
