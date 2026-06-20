@@ -21,6 +21,9 @@ const rooms = new Map<string, RoomData>();
 // Bot turn timeouts mapped by roomId
 const botTimeouts = new Map<string, NodeJS.Timeout>();
 
+// Grace period timeouts before disconnecting players
+const departureTimeouts = new Map<string, NodeJS.Timeout>();
+
 // Active connections mapped to room and player
 const activeConnections = new Map<WebSocket, { roomId: string; playerId: string }>();
 
@@ -473,34 +476,61 @@ function handlePlayerDepart(roomId: string, playerId: string, wss: SocketIOServe
       broadcastRoomState(room, wss);
     }
   } else {
-    // Active game: mark as disconnected, Bot AI automatically takes over to ensure smooth gameplay!
-    departingPlayer.isDisconnected = true;
-    addLog(room, `🔌 ${departingPlayer.name} disconnected. CPU bot took over.`, 'info');
-
-    // If host disconnected, designate next connected real player
-    if (departingPlayer.isHost) {
-      const nextHost = room.players.find(p => !p.id.startsWith('bot_') && !p.isDisconnected);
-      if (nextHost) {
-        departingPlayer.isHost = false;
-        nextHost.isHost = true;
-        addLog(room, `💼 ${nextHost.name} was promoted to Host.`, 'info');
-      }
+    // Active game: Wait for a grace period before marking player as disconnected and giving control to CPU/Bot
+    const key = `${roomId}-${playerId}`;
+    if (departureTimeouts.has(key)) {
+      clearTimeout(departureTimeouts.get(key)!);
+      departureTimeouts.delete(key);
     }
+    
+    const timeout = setTimeout(() => {
+      departureTimeouts.delete(key);
+      const r = rooms.get(roomId);
+      if (!r) return;
+      const player = r.players.find(p => p.id === playerId);
+      if (!player || player.isDisconnected) return;
+      
+      // Let's verify if there is indeed no active socket with this playerId is connected to the room
+      let remainsDisconnected = true;
+      wss.of("/").sockets.forEach(socket => {
+        const s = socket as any;
+        if (s.roomId === r.id && s.playerId === playerId) {
+          remainsDisconnected = false;
+        }
+      });
+      
+      if (remainsDisconnected) {
+        player.isDisconnected = true;
+        addLog(r, `🔌 ${player.name} left. CPU bot took over.`, 'info');
 
-    // If no real players remain, delete room immediately
-    const activeRealPlayersCount = room.players.filter(p => !p.id.startsWith('bot_') && !p.isDisconnected).length;
-    if (activeRealPlayersCount === 0) {
-      rooms.delete(room.id);
-      if (botTimeouts.has(room.id)) {
-        clearTimeout(botTimeouts.get(room.id)!);
-        botTimeouts.delete(room.id);
+        // If host disconnected, designate next connected real player
+        if (player.isHost) {
+          const nextHost = r.players.find(p => !p.id.startsWith('bot_') && !p.isDisconnected);
+          if (nextHost) {
+            player.isHost = false;
+            nextHost.isHost = true;
+            addLog(r, `💼 ${nextHost.name} was promoted to Host.`, 'info');
+          }
+        }
+
+        // If no real players remain, delete room immediately
+        const activeRealPlayersCount = r.players.filter(p => !p.id.startsWith('bot_') && !p.isDisconnected).length;
+        if (activeRealPlayersCount === 0) {
+          rooms.delete(r.id);
+          if (botTimeouts.has(r.id)) {
+            clearTimeout(botTimeouts.get(r.id)!);
+            botTimeouts.delete(r.id);
+          }
+          console.log(`Room ${r.id} cleaned up as all real players disconnected.`);
+        } else {
+          broadcastRoomState(r, wss);
+          // If it was their turn, trigger bot turn instantly
+          scheduleBotPlay(r.id, wss);
+        }
       }
-      console.log(`Room ${room.id} cleaned up as all real players disconnected.`);
-    } else {
-      broadcastRoomState(room, wss);
-      // If it was their turn, trigger bot turn instantly
-      scheduleBotPlay(room.id, wss);
-    }
+    }, 15000); // 15-second grace period
+    
+    departureTimeouts.set(key, timeout);
   }
 }
 
@@ -846,8 +876,8 @@ async function startServer() {
             }
           });
 
-          // Disconnect idle polling clients (no ping for 15 seconds)
-          if (!hasWS && now - lastSeen > 15000) {
+          // Disconnect idle polling clients (no ping for 45 seconds)
+          if (!hasWS && now - lastSeen > 45000) {
             if (room.status === 'playing') {
               p.isDisconnected = true;
               addLog(room, `🔌 ${p.name} became inactive. CPU took over.`, 'info');
@@ -938,7 +968,13 @@ async function startServer() {
               rooms.set(roomId, room);
             }
 
-            // Check reconnecting
+            // Check reconnecting and cancel any departure timeout
+            const timeoutKey = `${roomId}-${playerId}`;
+            if (departureTimeouts.has(timeoutKey)) {
+              clearTimeout(departureTimeouts.get(timeoutKey)!);
+              departureTimeouts.delete(timeoutKey);
+            }
+
             let player = room.players.find(p => p.id === playerId);
             if (player) {
               player.isDisconnected = false;
